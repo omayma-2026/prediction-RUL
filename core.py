@@ -42,13 +42,11 @@ WARN_DEFAULT = 60         # seuil d'attention (cycles)
 # --------------------------------------------------------------------------- #
 # Données
 # --------------------------------------------------------------------------- #
-def load_raw(data_dir: Path = DATA_DIR):
-    """Charge train / test / RUL réelle du test (FD001)."""
-    data_dir = Path(data_dir)
-    train = pd.read_csv(data_dir / "train_FD001.txt", sep=r"\s+", header=None, names=COLS)
-    test = pd.read_csv(data_dir / "test_FD001.txt", sep=r"\s+", header=None, names=COLS)
-    rul = pd.read_csv(data_dir / "RUL_FD001.txt", sep=r"\s+", header=None, names=["RUL"])
-    return train, test, rul
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR if (BASE_DIR / "train_FD001.txt").exists() else BASE_DIR / "data"
+MODEL_DIR = BASE_DIR
+MODEL_PATH = MODEL_DIR / "rul_model.joblib"
+META_PATH = MODEL_DIR / "meta.json"
 
 
 def add_rul(train: pd.DataFrame, cap: int = CAP) -> pd.DataFrame:
