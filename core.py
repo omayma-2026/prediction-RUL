@@ -42,11 +42,26 @@ WARN_DEFAULT = 60         # seuil d'attention (cycles)
 # --------------------------------------------------------------------------- #
 # Données
 # --------------------------------------------------------------------------- #
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR if (BASE_DIR / "train_FD001.txt").exists() else BASE_DIR / "data"
-MODEL_DIR = BASE_DIR
-MODEL_PATH = MODEL_DIR / "rul_model.joblib"
-META_PATH = MODEL_DIR / "meta.json"
+def _find_file(name: str, data_dir: Path = DATA_DIR) -> Path:
+    """Cherche le fichier dans le dossier prévu, la racine du projet ou un sous-dossier."""
+    for base in (Path(data_dir), BASE_DIR, BASE_DIR / "data", Path.cwd()):
+        if (base / name).exists():
+            return base / name
+    hits = list(BASE_DIR.rglob(name))
+    if hits:
+        return hits[0]
+    raise FileNotFoundError(
+        f"{name} introuvable. Dossier du projet : {BASE_DIR} | "
+        f"contenu : {sorted(p.name for p in BASE_DIR.iterdir())}"
+    )
+
+
+def load_raw(data_dir: Path = DATA_DIR):
+    """Charge train / test / RUL réelle du test (FD001)."""
+    train = pd.read_csv(_find_file("train_FD001.txt", data_dir), sep=r"\s+", header=None, names=COLS)
+    test = pd.read_csv(_find_file("test_FD001.txt", data_dir), sep=r"\s+", header=None, names=COLS)
+    rul = pd.read_csv(_find_file("RUL_FD001.txt", data_dir), sep=r"\s+", header=None, names=["RUL"])
+    return train, test, rul
 
 
 def add_rul(train: pd.DataFrame, cap: int = CAP) -> pd.DataFrame:
