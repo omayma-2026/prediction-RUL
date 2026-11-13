@@ -42,12 +42,26 @@ WARN_DEFAULT = 60         # seuil d'attention (cycles)
 # --------------------------------------------------------------------------- #
 # Données
 # --------------------------------------------------------------------------- #
+RAW_URL = "https://raw.githubusercontent.com/omayma-2026/prediction-RUL/main/"
+
+
+def _locate(name: str, data_dir: Path = DATA_DIR) -> str:
+    """Cherche le fichier localement ; sinon le télécharge depuis GitHub."""
+    for base in (Path(data_dir), BASE_DIR, BASE_DIR / "data", Path.cwd()):
+        if (base / name).exists():
+            return str(base / name)
+    hits = list(BASE_DIR.rglob(name))
+    if hits:
+        return str(hits[0])
+    return RAW_URL + name
+
+
 def load_raw(data_dir: Path = DATA_DIR):
     """Charge train / test / RUL réelle du test (FD001)."""
-    data_dir = Path(data_dir)
-    train = pd.read_csv(data_dir / "train_FD001.txt", sep=r"\s+", header=None, names=COLS)
-    test = pd.read_csv(data_dir / "test_FD001.txt", sep=r"\s+", header=None, names=COLS)
-    rul = pd.read_csv(data_dir / "RUL_FD001.txt", sep=r"\s+", header=None, names=["RUL"])
+    kw = dict(sep=r"\s+", header=None)
+    train = pd.read_csv(_locate("train_FD001.txt", data_dir), names=COLS, **kw)
+    test = pd.read_csv(_locate("test_FD001.txt", data_dir), names=COLS, **kw)
+    rul = pd.read_csv(_locate("RUL_FD001.txt", data_dir), names=["RUL"], **kw)
     return train, test, rul
 
 
