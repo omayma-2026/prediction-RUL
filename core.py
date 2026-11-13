@@ -42,25 +42,12 @@ WARN_DEFAULT = 60         # seuil d'attention (cycles)
 # --------------------------------------------------------------------------- #
 # Données
 # --------------------------------------------------------------------------- #
-def _find_file(name: str, data_dir: Path = DATA_DIR) -> Path:
-    """Cherche le fichier dans le dossier prévu, la racine du projet ou un sous-dossier."""
-    for base in (Path(data_dir), BASE_DIR, BASE_DIR / "data", Path.cwd()):
-        if (base / name).exists():
-            return base / name
-    hits = list(BASE_DIR.rglob(name))
-    if hits:
-        return hits[0]
-    raise FileNotFoundError(
-        f"{name} introuvable. Dossier du projet : {BASE_DIR} | "
-        f"contenu : {sorted(p.name for p in BASE_DIR.iterdir())}"
-    )
-
-
 def load_raw(data_dir: Path = DATA_DIR):
     """Charge train / test / RUL réelle du test (FD001)."""
-    train = pd.read_csv(_find_file("train_FD001.txt", data_dir), sep=r"\s+", header=None, names=COLS)
-    test = pd.read_csv(_find_file("test_FD001.txt", data_dir), sep=r"\s+", header=None, names=COLS)
-    rul = pd.read_csv(_find_file("RUL_FD001.txt", data_dir), sep=r"\s+", header=None, names=["RUL"])
+    data_dir = Path(data_dir)
+    train = pd.read_csv(data_dir / "train_FD001.txt", sep=r"\s+", header=None, names=COLS)
+    test = pd.read_csv(data_dir / "test_FD001.txt", sep=r"\s+", header=None, names=COLS)
+    rul = pd.read_csv(data_dir / "RUL_FD001.txt", sep=r"\s+", header=None, names=["RUL"])
     return train, test, rul
 
 
@@ -204,8 +191,12 @@ def train_and_save(data_dir: Path = DATA_DIR) -> dict:
 
 def load_artifacts():
     """Charge modèle + métadonnées ; entraîne automatiquement s'ils sont absents."""
-    if not (MODEL_PATH.exists() and META_PATH.exists()):
-        train_and_save()
+    if MODEL_PATH.exists() and META_PATH.exists():
+        try:
+            return joblib.load(MODEL_PATH), json.loads(META_PATH.read_text())
+        except Exception:
+            pass  # modèle illisible (version de scikit-learn différente) : on réentraîne
+    train_and_save()
     return joblib.load(MODEL_PATH), json.loads(META_PATH.read_text())
 
 
