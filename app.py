@@ -3,6 +3,8 @@ app.py – RUL Monitor : suivi de la durée de vie restante de moteurs turbofan
 NASA C-MAPSS FD001.  Lancer :  streamlit run app.py
 Interface inspirée d'un cockpit / écran ECAM (thème sombre, voyants, radar de flotte).
 """
+import io
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -145,6 +147,21 @@ def show(fig):
         st.plotly_chart(fig)
 
 
+def read_uploaded(uploaded) -> pd.DataFrame:
+    """Lit un fichier CSV/TXT : avec ou sans en-tête (format C-MAPSS à 26 colonnes)."""
+    raw = uploaded.getvalue().decode("utf-8", errors="ignore").strip()
+    first = raw.splitlines()[0]
+    has_header = any(ch.isalpha() for ch in first)
+    sep = r"\s+" if ("," not in first and ";" not in first) else ("," if "," in first else ";")
+    df = pd.read_csv(io.StringIO(raw), sep=sep, header=0 if has_header else None, engine="python")
+    if not has_header:
+        if df.shape[1] != len(core.COLS):
+            raise ValueError(f"Sans en-tête, le fichier doit avoir {len(core.COLS)} colonnes (format C-MAPSS).")
+        df.columns = core.COLS
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
 def hero_svg() -> str:
     """Turbofan (vue de face) animé + route de vol décorative."""
     blades = "".join(
@@ -196,6 +213,11 @@ MODEL, META = get_model()
 FEAT, RUL_FINAL = get_features(META["model"])
 FLEET = core.predict_fleet(MODEL, META, FEAT)
 CAP = META["cap"]
+reco_text = {
+    "Critique": "Retirer le moteur du service et planifier une inspection immédiate.",
+    "Attention": "Planifier une intervention de maintenance lors de la prochaine escale.",
+    "Normal": "Fonctionnement nominal. Poursuivre la surveillance habituelle.",
+}
 RES = pd.DataFrame(META["results"]).T
 BEST = META["model"]
 
@@ -237,8 +259,8 @@ with st.sidebar:
     warn = st.number_input("Seuil d'attention (cycles)", 10, 200, core.WARN_DEFAULT)
     st.caption("Sous le seuil critique : maintenance immédiate.")
 
-tab_engine, tab_fleet, tab_models, tab_export = st.tabs(
-    ["Suivi moteur", "Flotte", "Modèles", "Export"]
+tab_engine, tab_fleet, tab_models, tab_new, tab_export = st.tabs(
+    ["Suivi moteur", "Flotte", "Modèles", "Nouvelle prédiction", "Export"]
 )
 
 # --------------------------------------------------------------------------- #
@@ -274,11 +296,7 @@ with tab_engine:
         f'<div class="health" style="--c:{color}"><div style="width:{health:.0f}%"></div></div>',
         unsafe_allow_html=True,
     )
-    reco = {
-        "Critique": "Retirer le moteur du service et planifier une inspection immédiate.",
-        "Attention": "Planifier une intervention de maintenance lors de la prochaine escale.",
-        "Normal": "Fonctionnement nominal. Poursuivre la surveillance habituelle.",
-    }[label]
+    reco = reco_text[label]
     st.markdown(
         f'<div class="reco" style="--c:{color}"><b>Recommandation :</b>&nbsp;{reco}</div>',
         unsafe_allow_html=True,
@@ -449,7 +467,83 @@ with tab_models:
         show(style_fig(fig_i, 440))
 
 # --------------------------------------------------------------------------- #
-# Onglet 4 : export
+# Onglet 4 : nouvelle prédiction (fichier envoyé par l'utilisateur)
+# --------------------------------------------------------------------------- #
+with tab_new:
+    needed = ["cycle"] + list(META["sensors"])
+    with st.container(border=True):
+        ptitle("Prédire la RUL d'un nouveau moteur")
+        st.write("Envoyez l'**historique des mesures** d'un moteur (un fichier CSV ou TXT). "
+                 "Le modèle estime combien de cycles il lui reste, au dernier cycle du fichier.")
+        st.markdown("**Colonnes nécessaires :** `" + "`, `".join(needed) + "`. La colonne `unit` (numéro du moteur) "
+                    "est facultative : sans elle, tout le fichier est traité comme un seul moteur. "
+                    "Le format C-MAPSS à 26 colonnes sans en-tête est aussi accepté.")
+        st.caption("Le modèle a été entraîné sur des moteurs simulés (NASA C-MAPSS FD001) : il ne s'applique "
+                   "qu'à des données du même type. Prévoir au moins 10 cycles d'historique, "
+                   "car les variables glissantes utilisent les 5 et 10 derniers cycles.")
+        example_id = 34
+        example = FEAT[FEAT["unit"] == example_id][["unit"] + needed]
+        st.download_button("Télécharger un fichier d'exemple (moteur 34)",
+                           data=example.to_csv(index=False).encode("utf-8"),
+                           file_name="exemple_moteur_34.csv", mime="text/csv")
+        uploaded = st.file_uploader("Fichier du moteur", type=["csv", "txt"])
+
+    if uploaded is not None:
+        try:
+            new_df = read_uploaded(uploaded)
+            missing = [c for c in needed if c not in new_df.columns]
+            if missing:
+                raise ValueError("Colonnes manquantes : " + ", ".join(missing))
+            if "unit" not in new_df.columns:
+                new_df["unit"] = 1
+            use = new_df[["unit"] + needed].apply(pd.to_numeric, errors="coerce")
+            if use.isna().any().any():
+                raise ValueError("Le fichier contient des valeurs vides ou non numériques.")
+            new_feat = core.add_features(use, META["sensors"], tuple(META["windows"]))
+            new_feat["RUL_predite"] = core.predict_rul(MODEL, META, new_feat)
+        except Exception as e:
+            st.error(f"Fichier non utilisable : {e}")
+        else:
+            units = sorted(new_feat["unit"].unique())
+            u = st.selectbox("Moteur du fichier", units) if len(units) > 1 else units[0]
+            one = new_feat[new_feat["unit"] == u]
+            rul_new = float(one["RUL_predite"].iloc[-1])
+            label_n, _ = core.status(rul_new, crit, warn)
+            color_n = STATUS_COLOR[label_n]
+            n_cycles = len(one)
+
+            n1, n2, n3 = st.columns(3)
+            n1.markdown(kpi("RUL prédite", f"{rul_new:.0f}", "cycles", color_n,
+                            f"au cycle {int(one['cycle'].iloc[-1])}"), unsafe_allow_html=True)
+            n2.markdown(kpi("Cycles fournis", n_cycles, "", BLUE, "historique du moteur"), unsafe_allow_html=True)
+            n3.markdown(html(
+                f"""<div class="kpi" style="--c:{color_n}"><div class="kpi-l">Statut du moteur</div>
+                <div style="margin:.75rem 0 .5rem"><span class="lamp"></span><span class="status-txt">{label_n.upper()}</span></div>
+                <div class="kpi-s">Seuils : {crit} et {warn} cycles</div></div>"""), unsafe_allow_html=True)
+            if n_cycles < 10:
+                st.warning("Moins de 10 cycles d'historique : les variables glissantes sont incomplètes, "
+                           "la prédiction est peu fiable.")
+            st.markdown(
+                f'<div class="reco" style="--c:{color_n}"><b>Recommandation :</b>&nbsp;{reco_text[label_n]}</div>',
+                unsafe_allow_html=True)
+
+            with st.container(border=True):
+                ptitle("Évolution de la RUL prédite")
+                fig_n = go.Figure()
+                fig_n.add_trace(go.Scatter(x=one["cycle"], y=one["RUL_predite"], name="RUL prédite", fill="tozeroy",
+                                           line=dict(color=CYAN, width=3), fillcolor="rgba(34,211,238,.10)"))
+                fig_n.add_hline(y=crit, line_color=RED, line_dash="dot", annotation_text="critique",
+                                annotation_font_color=RED, annotation_font_size=14)
+                fig_n.add_hline(y=warn, line_color=AMBER, line_dash="dot", annotation_text="attention",
+                                annotation_font_color=AMBER, annotation_font_size=14)
+                fig_n.update_layout(xaxis_title="cycle", yaxis_title="RUL (cycles)", yaxis_range=[0, CAP + 8])
+                show(style_fig(fig_n, 300))
+            out = one[["unit", "cycle", "RUL_predite"]].round(1)
+            st.download_button("Télécharger les prédictions (CSV)", data=out.to_csv(index=False).encode("utf-8"),
+                               file_name="predictions_nouveau_moteur.csv", mime="text/csv")
+
+# --------------------------------------------------------------------------- #
+# Onglet 5 : export
 # --------------------------------------------------------------------------- #
 with tab_export:
     with st.container(border=True):
