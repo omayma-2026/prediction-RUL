@@ -210,7 +210,7 @@ st.markdown(
         <span class="chip">Données : <b>NASA C-MAPSS FD001</b></span>
         <span class="chip">Flotte : <b>{FLEET.shape[0]} moteurs</b></span>
         <span class="chip">Modèle : <b>{BEST}</b></span>
-        <span class="chip">Erreur moyenne (RMSE) : <b>{RES.loc[BEST, 'RMSE']:.1f} cycles</b></span>
+        <span class="chip">RMSE : <b>{RES.loc[BEST, 'RMSE']:.1f} cycles</b></span>
         </div>"""
     ),
     unsafe_allow_html=True,
